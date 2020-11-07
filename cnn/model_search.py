@@ -92,7 +92,6 @@ class Network(nn.Module):
     self.global_pooling = nn.AdaptiveAvgPool2d(1)
     self.classifier = nn.Linear(C_prev, num_classes)
 
-    self._initialize_alphas()
 
   def new(self):
     model_new = Network(self._C, self._num_classes, self._layers, self._criterion).cuda()
@@ -104,9 +103,11 @@ class Network(nn.Module):
     s0 = s1 = self.stem(input)
     for i, cell in enumerate(self.cells):
       if cell.reduction:
-        weights = F.softmax(self.alphas_reduce, dim=-1)
+        #weights = F.softmax(alphas_reduce, dim=-1)
+        weights = self.alphas_reduce
       else:
-        weights = F.softmax(self.alphas_normal, dim=-1)
+        #weights = F.softmax(alphas_normal, dim=-1)
+        weights = self.alphas_normal
       s0, s1 = s1, cell(s0, s1, weights)
     out = self.global_pooling(s1)
     logits = self.classifier(out.view(out.size(0),-1))
@@ -116,21 +117,20 @@ class Network(nn.Module):
     logits = self(input)
     return self._criterion(logits, target) 
 
-  def _initialize_alphas(self):
+  def set_alpha(alphas_normal, alphas_reduce):
+    self.alphas_normal = alphas_normal
+    self.alphas_reduce = alphas_reduce
+
+
+  def get_arch_param_nums(self):
     k = sum(1 for i in range(self._steps) for n in range(2+i))
     num_ops = len(PRIMITIVES)
-
-    self.alphas_normal = Variable(1e-3*torch.randn(k, num_ops).cuda(), requires_grad=True)
-    self.alphas_reduce = Variable(1e-3*torch.randn(k, num_ops).cuda(), requires_grad=True)
-    self._arch_parameters = [
-      self.alphas_normal,
-      self.alphas_reduce,
-    ]
+    return k, num_ops
 
   def arch_parameters(self):
     return self._arch_parameters
 
-  def genotype(self):
+  def genotype(self, alphas_normal, alphas_reduce):
 
     def _parse(weights):
       gene = []
@@ -151,8 +151,8 @@ class Network(nn.Module):
         n += 1
       return gene
 
-    gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy())
-    gene_reduce = _parse(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy())
+    gene_normal = _parse(F.softmax(alphas_normal, dim=-1).data.cpu().numpy())
+    gene_reduce = _parse(F.softmax(alphas_reduce, dim=-1).data.cpu().numpy())
 
     concat = range(2+self._steps-self._multiplier, self._steps+2)
     genotype = Genotype(
